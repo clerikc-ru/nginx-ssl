@@ -4,9 +4,9 @@ metadata:
   name: nginx-ingress
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
+    kubernetes.io/ingress.class: "nginx"
 spec:
   rules:
-  # Пустое правило host - будет работать для всех запросов
   - http:
       paths:
       - path: /
