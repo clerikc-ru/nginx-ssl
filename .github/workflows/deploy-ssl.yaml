@@ -1,0 +1,92 @@
+name: Deploy SSL Configuration
+
+on:
+  workflow_dispatch:  # Только ручной запуск
+
+jobs:
+  deploy-ssl:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Kubernetes
+      env:
+        KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      run: |
+        mkdir -p ~/.kube
+        echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
+        kubectl cluster-info
+        
+    - name: Install cert-manager
+      run: |
+        echo "🚀 Устанавливаем cert-manager..."
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+        
+        echo "⏳ Ожидаем запуск cert-manager..."
+        sleep 60
+        
+        # Ждем готовности всех компонентов cert-manager
+        kubectl wait --namespace cert-manager \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/instance=cert-manager \
+          --timeout=300s
+          
+        echo "✅ cert-manager установлен"
+        
+    - name: Deploy ClusterIssuer
+      run: |
+        echo "📝 Создаем ClusterIssuer для Let's Encrypt..."
+        kubectl apply -f k8s/cluster-issuer.yaml
+        
+        # Проверяем что ClusterIssuer создан
+        kubectl get clusterissuer
+        
+    - name: Update Ingress with SSL
+      run: |
+        echo "🔧 Обновляем Ingress с SSL аннотациями..."
+        kubectl apply -f k8s/ingress-ssl.yaml
+        
+        echo "⏳ Ожидаем выпуск SSL сертификата..."
+        sleep 30
+        
+    - name: Verify SSL Setup
+      run: |
+        echo "🔍 Проверяем SSL настройки..."
+        
+        echo "=== Certificates ==="
+        kubectl get certificates -A
+        
+        echo "=== Certificate Requests ==="
+        kubectl get certificaterequests -A
+        
+        echo "=== Orders ==="
+        kubectl get orders -A
+        
+        echo "=== Challenges ==="
+        kubectl get challenges -A
+        
+        echo "=== Подробности сертификата ==="
+        kubectl describe certificate clerikc-ru-tls
+        
+        echo "=== Проверка HTTPS доступа ==="
+        curl -I -k https://clerikc.ru:30443/ || echo "HTTPS проверка завершена"
+        
+    - name: Monitor Certificate Status
+      run: |
+        echo "📊 Мониторинг статуса сертификата (будет готов через 1-5 минут)..."
+        timeout 300s bash -c 'while true; do
+          STATUS=$(kubectl get certificate clerikc-ru-tls -o jsonpath="{.status.conditions[?(@.type==\"Ready\")].status}" 2>/dev/null || echo "Unknown")
+          if [ "$STATUS" = "True" ]; then
+            echo "🎉 SSL сертификат готов и валиден!"
+            break
+          elif [ "$STATUS" = "False" ]; then
+            echo "❌ Ошибка в выпуске сертификата"
+            kubectl describe certificate clerikc-ru-tls
+            exit 1
+          else
+            echo "⏳ Статус сертификата: $STATUS - ждем..."
+            sleep 10
+          fi
+        done' || echo "Время ожидания истекло, проверьте сертификат вручную"

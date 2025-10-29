@@ -1,0 +1,65 @@
+name: Deploy Nginx Application
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Kubernetes
+      env:
+        KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      run: |
+        mkdir -p ~/.kube
+        echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
+        kubectl cluster-info
+        
+    - name: Deploy Ingress Nginx
+      run: |
+        # Устанавливаем ingress-nginx
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+        
+        # Ждем запуска
+        sleep 30
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=180s
+        
+        # Применяем наш NodePort сервис
+        kubectl apply -f k8s/ingress-service.yaml
+        
+    - name: Create ConfigMap from HTML files
+      run: |
+        # Создаем ConfigMap из папки html/
+        kubectl create configmap nginx-html --from-file=html/ -o yaml --dry-run=client > k8s/configmap-generated.yaml
+        kubectl apply -f k8s/configmap-generated.yaml
+        
+    - name: Restart application
+      run: |
+       kubectl rollout restart deployment/nginx-app
+       kubectl rollout status deployment/nginx-app --timeout=90s
+
+
+
+    - name: Deploy Application
+      run: |
+        # Применяем остальные манифесты (кроме configmap.yaml)
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
+        kubectl apply -f k8s/ingress.yaml
+        
+    - name: Verify Setup
+      run: |
+        echo "=== Проверка ConfigMap ==="
+        kubectl get configmap nginx-html -o yaml | head -20
+        
+        echo "=== Проверка доступности ==="
+        curl -s http://185.8.22.53:30080/ | head -10

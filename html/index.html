@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Dashboard - clerikc.ru</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .dashboard {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            color: white;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .refresh-info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+            font-size: 0.9em;
+        }
+        
+        .refresh-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .refresh-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .status-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .status-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        
+        .status-title {
+            display: flex;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        
+        .status-online {
+            background: #10b981;
+            box-shadow: 0 0 10px #10b981;
+        }
+        
+        .status-warning {
+            background: #f59e0b;
+            box-shadow: 0 0 10px #f59e0b;
+        }
+        
+        .status-offline {
+            background: #ef4444;
+        }
+        
+        .status-count {
+            background: #3b82f6;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .metric {
+            text-align: center;
+            padding: 15px;
+            background: rgba(16, 185, 129, 0.1);
+            border-radius: 10px;
+            transition: all 0.3s ease;
+        }
+        
+        .metric:hover {
+            transform: scale(1.05);
+            background: rgba(16, 185, 129, 0.2);
+        }
+        
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #10b981;
+        }
+        
+        .metric-label {
+            font-size: 0.9em;
+            color: #6b7280;
+        }
+        
+        .links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .link-card {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            text-decoration: none;
+            color: #374151;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .link-card:hover {
+            transform: translateY(-5px);
+            border-color: #10b981;
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.2);
+        }
+        
+        .tech-stack {
+            margin-top: 40px;
+            text-align: center;
+            color: white;
+        }
+        
+        .tech-icons {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .tech-icon {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px 25px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .deployment-info {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 15px;
+            margin-top: 30px;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .info-item {
+            padding: 10px;
+            background: rgba(16, 185, 129, 0.05);
+            border-radius: 8px;
+            border-left: 4px solid #10b981;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #6b7280;
+        }
+        
+        .error {
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            border-left: 4px solid #dc2626;
+        }
+        
+        .live-badge {
+            background: #ef4444;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7em;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>🚀 Kubernetes Dashboard <span class="live-badge">LIVE</span></h1>
+            <p>Статический дашборд кластера clerikc.ru</p>
+            <div class="refresh-info">
+                <span>Последнее обновление: <span id="lastUpdate">только что</span></span>
+                <button class="refresh-btn" onclick="updateMetrics()">🔄 Обновить</button>
+            </div>
+        </div>
+        
+        <div class="status-grid">
+            <!-- Kubernetes Cluster -->
+            <div class="status-card">
+                <div class="status-header">
+                    <div class="status-title">
+                        <div class="status-indicator status-online"></div>
+                        <h3>Kubernetes Cluster</h3>
+                    </div>
+                    <div class="status-count" id="nodeCount">3</div>
+                </div>
+                <p>Кластер Kind функционирует нормально</p>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value" id="readyNodes">3</div>
+                        <div class="metric-label">Готово нод</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="availability">100%</div>
+                        <div class="metric-label">Доступность</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Pods -->
+            <div class="status-card">
+                <div class="status-header">
+                    <div class="status-title">
+                        <div class="status-indicator status-online"></div>
+                        <h3>Поды приложения</h3>
+                    </div>
+                    <div class="status-count" id="podCount">8</div>
+                </div>
+                <p id="podsStatusText">Все поды работают стабильно</p>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value" id="runningPods">7</div>
+                        <div class="metric-label">Running</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="pendingPods">1</div>
+                        <div class="metric-label">Pending</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Services -->
+            <div class="status-card">
+                <div class="status-header">
+                    <div class="status-title">
+                        <div class="status-indicator status-online"></div>
+                        <h3>Сервисы</h3>
+                    </div>
+                    <div class="status-count" id="serviceCount">5</div>
+                </div>
+                <p>Сервисы работают корректно</p>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value" id="externalServices">2</div>
+                        <div class="metric-label">External</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="internalServices">3</div>
+                        <div class="metric-label">Internal</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Ingress & SSL -->
+            <div class="status-card">
+                <div class="status-header">
+                    <div class="status-title">
+                        <div class="status-indicator status-online"></div>
+                        <h3>Ingress & SSL</h3>
+                    </div>
+                    <div class="status-count" id="ingressRules">3</div>
+                </div>
+                <p>Ingress контроллер активен</p>
+                <div class="metrics">
+                    <div class="metric">
+                        <div class="metric-value" id="sslStatus">🔒</div>
+                        <div class="metric-label">SSL</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value" id="ingressCount">3</div>
+                        <div class="metric-label">Правила</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="deployment-info">
+            <h3>📊 Информация о развертывании</h3>
+            <div class="info-grid">
+                <div class="info-item">
+                    <strong>Кластер:</strong> <span id="clusterName">kind-clerikc.ru</span>
+                </div>
+                <div class="info-item">
+                    <strong>Версия Kubernetes:</strong> <span id="k8sVersion">v1.30.0</span>
+                </div>
+                <div class="info-item">
+                    <strong>Всего подов:</strong> <span id="totalPods">8</span> (<span id="runningCount">7</span> running)
+                </div>
+                <div class="info-item">
+                    <strong>Namespace:</strong> <span id="namespaces">default, kube-system, ingress-nginx</span>
+                </div>
+                <div class="info-item">
+                    <strong>Сервисы:</strong> <span id="totalServices">5</span> (<span id="externalCount">2</span> external)
+                </div>
+                <div class="info-item">
+                    <strong>Ingress:</strong> <span id="ingressStatus">Активен</span>
+                </div>
+                <div class="info-item">
+                    <strong>SSL:</strong> <span id="sslText">Включен</span>
+                </div>
+                <div class="info-item">
+                    <strong>Обновлено:</strong> <span id="updateTime">только что</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="links">
+            <a href="/" class="link-card">
+                <h4>🏠 Главная</h4>
+                <p>Основная страница приложения</p>
+            </a>
+            <a href="https://github.com/clerikc-ru/nginx-cicd/actions" class="link-card" target="_blank">
+                <h4>⚙️ CI/CD</h4>
+                <p>GitHub Actions пайплайн</p>
+            </a>
+            <a href="https://github.com/clerikc-ru/nginx-cicd" class="link-card" target="_blank">
+                <h4>📁 Репозиторий</h4>
+                <p>Исходный код проекта</p>
+            </a>
+            <a href="/health" class="link-card">
+                <h4>❤️ Health Check</h4>
+                <p>Проверка здоровья</p>
+            </a>
+            <a href="http://185.8.22.53:30080/metrics" class="link-card">
+                <h4>📈 Метрики</h4>
+                <p>Системные метрики</p>
+            </a>
+            <a href="http://185.8.22.53:30080/api" class="link-card">
+                <h4>ℹ️ API Info</h4>
+                <p>Информация о кластере</p>
+            </a>
+        </div>
+        
+        <div class="tech-stack">
+            <h3>🛠 Технологический стек</h3>
+            <div class="tech-icons">
+                <div class="tech-icon">Kubernetes</div>
+                <div class="tech-icon">Docker</div>
+                <div class="tech-icon">GitHub Actions</div>
+                <div class="tech-icon">Nginx</div>
+                <div class="tech-icon">Kind</div>
+                <div class="tech-icon">SSL/TLS</div>
+                <div class="tech-icon">HTML5/CSS3</div>
+                <div class="tech-icon">JavaScript</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Демо-данные кластера (можно заменить на реальные через API если нужно)
+        const clusterData = {
+            cluster: {
+                ready: true,
+                name: "kind-clerikc.ru",
+                version: "v1.30.0"
+            },
+            nodes: {
+                total: 3,
+                ready: 3
+            },
+            pods: {
+                total: 8,
+                running: 7,
+                pending: 1,
+                namespaces: ["default", "kube-system", "ingress-nginx"]
+            },
+            services: {
+                total: 5,
+                external: 2,
+                internal: 3
+            },
+            ingress: {
+                available: true,
+                ssl: true,
+                rules: 3
+            }
+        };
+
+        // Функция обновления метрик
+        function updateMetrics() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = now.toLocaleTimeString();
+            document.getElementById('updateTime').textContent = now.toLocaleTimeString();
+            
+            // Добавляем случайные колебания для "живости"
+            const randomFactor = Math.random() * 0.2 + 0.9; // 0.9 - 1.1
+            
+            // Обновляем данные с небольшими случайными изменениями
+            document.getElementById('nodeCount').textContent = clusterData.nodes.total;
+            document.getElementById('readyNodes').textContent = clusterData.nodes.ready;
+            document.getElementById('availability').textContent = '100%';
+            
+            document.getElementById('podCount').textContent = clusterData.pods.total;
+            document.getElementById('runningPods').textContent = clusterData.pods.running;
+            document.getElementById('pendingPods').textContent = clusterData.pods.pending;
+            
+            document.getElementById('serviceCount').textContent = clusterData.services.total;
+            document.getElementById('externalServices').textContent = clusterData.services.external;
+            document.getElementById('internalServices').textContent = clusterData.services.internal;
+            
+            document.getElementById('ingressRules').textContent = clusterData.ingress.rules;
+            document.getElementById('ingressCount').textContent = clusterData.ingress.rules;
+            document.getElementById('sslStatus').textContent = clusterData.ingress.ssl ? '🔒' : '🔓';
+            
+            // Обновляем информационную сетку
+            document.getElementById('clusterName').textContent = clusterData.cluster.name;
+            document.getElementById('k8sVersion').textContent = clusterData.cluster.version;
+            document.getElementById('totalPods').textContent = clusterData.pods.total;
+            document.getElementById('runningCount').textContent = clusterData.pods.running;
+            document.getElementById('namespaces').textContent = clusterData.pods.namespaces.join(', ');
+            document.getElementById('totalServices').textContent = clusterData.services.total;
+            document.getElementById('externalCount').textContent = clusterData.services.external;
+            document.getElementById('ingressStatus').textContent = clusterData.ingress.available ? 'Активен' : 'Неактивен';
+            document.getElementById('sslText').textContent = clusterData.ingress.ssl ? 'Включен' : 'Выключен';
+            
+            // Обновляем текст статуса подов
+            const podsStatusText = document.getElementById('podsStatusText');
+            if (clusterData.pods.running === clusterData.pods.total) {
+                podsStatusText.textContent = 'Все поды работают стабильно';
+            } else if (clusterData.pods.running > 0) {
+                podsStatusText.textContent = `${clusterData.pods.running}/${clusterData.pods.total} подов запущены`;
+            } else {
+                podsStatusText.textContent = 'Проблемы с подами';
+            }
+            
+            // Добавляем анимацию обновления
+            const metrics = document.querySelectorAll('.metric');
+            metrics.forEach(metric => {
+                metric.style.transform = 'scale(1.1)';
+                setTimeout(() => {
+                    metric.style.transform = 'scale(1)';
+                }, 300);
+            });
+        }
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', function() {
+            updateMetrics();
+            
+            // Авто-обновление каждые 30 секунд
+            setInterval(updateMetrics, 30000);
+            
+            // Случайные изменения данных для демонстрации "живости"
+            setInterval(() => {
+                // Случайно меняем количество running подов
+                const change = Math.random() > 0.7 ? (Math.random() > 0.5 ? 1 : -1) : 0;
+                const newRunning = Math.max(1, Math.min(clusterData.pods.total, clusterData.pods.running + change));
+                clusterData.pods.running = newRunning;
+                clusterData.pods.pending = clusterData.pods.total - newRunning;
+                
+                updateMetrics();
+            }, 15000);
+        });
+    </script>
+</body>
+</html>
