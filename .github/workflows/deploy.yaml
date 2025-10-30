@@ -42,6 +42,9 @@ jobs:
         # Настраиваем ingress-nginx на запуск ТОЛЬКО на control-plane
         kubectl patch deployment ingress-nginx-controller -n ingress-nginx -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"clerikc.ru-control-plane"}}}}}'
         
+        # Принудительно удаляем старый pod чтобы запустился новый
+        kubectl delete pods -n ingress-nginx -l app.kubernetes.io/component=controller
+
         # Ждем перезапуска
         kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=120s
         
