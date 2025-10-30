@@ -19,34 +19,120 @@ jobs:
         echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
         kubectl cluster-info
         
+    - name: Cleanup existing cert-manager
+      run: |
+        echo "🧹 Очищаем существующий cert-manager..."
+        kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml 2>/dev/null || true
+        kubectl delete namespace cert-manager --wait=false 2>/dev/null || true
+        sleep 30
+        
     - name: Install cert-manager
       run: |
         echo "🚀 Устанавливаем cert-manager..."
         kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
         
         echo "⏳ Ожидаем запуск cert-manager..."
-        sleep 60
+        # Ждем создания namespace
+        sleep 30
         
-        # Ждем готовности всех компонентов cert-manager
+        # Ждем готовности ВСЕХ компонентов cert-manager
+        echo "Ожидаем cert-manager..."
         kubectl wait --namespace cert-manager \
           --for=condition=ready pod \
-          --selector=app.kubernetes.io/instance=cert-manager \
+          --selector=app=cert-manager \
           --timeout=300s
           
-        echo "✅ cert-manager установлен"
+        echo "Ожидаем cert-manager-webhook..."
+        kubectl wait --namespace cert-manager \
+          --for=condition=ready pod \
+          --selector=app=webhook \
+          --timeout=300s
+          
+        echo "Ожидаем cert-manager-cainjector..."
+        kubectl wait --namespace cert-manager \
+          --for=condition=ready pod \
+          --selector=app=cainjector \
+          --timeout=300s
+          
+        # Дополнительная проверка что webhook работает
+        sleep 10
+        kubectl get pods -n cert-manager
+        
+        echo "✅ cert-manager установлен и готов"
+        
+    - name: Verify cert-manager webhook
+      run: |
+        echo "🔍 Проверяем webhook cert-manager..."
+        kubectl get validatingwebhookconfigurations
+        kubectl get mutatingwebhookconfigurations
+        
+        # Проверяем что webhook отвечает
+        timeout 60s bash -c 'until kubectl get clusterissuer 2>/dev/null; do echo "Ждем webhook..."; sleep 5; done'
         
     - name: Deploy ClusterIssuer
       run: |
         echo "📝 Создаем ClusterIssuer для Let's Encrypt..."
-        kubectl apply -f k8s/cluster-issuer.yaml
+        
+        # Сначала staging для тестирования
+        cat <<EOF | kubectl apply -f -
+        apiVersion: cert-manager.io/v1
+        kind: ClusterIssuer
+        metadata:
+          name: letsencrypt-staging
+        spec:
+          acme:
+            server: https://acme-staging-v02.api.letsencrypt.org/directory
+            email: your-email@example.com  # ЗАМЕНИТЕ на реальный email
+            privateKeySecretRef:
+              name: letsencrypt-staging
+            solvers:
+            - http01:
+                ingress:
+                  class: nginx
+        EOF
         
         # Проверяем что ClusterIssuer создан
         kubectl get clusterissuer
+        kubectl describe clusterissuer letsencrypt-staging
         
     - name: Update Ingress with SSL
       run: |
         echo "🔧 Обновляем Ingress с SSL аннотациями..."
-        kubectl apply -f k8s/ingress-ssl.yaml
+        
+        # Сначала удаляем старый ingress если есть
+        kubectl delete ingress nginx-ingress 2>/dev/null || true
+        kubectl delete certificate clerikc-ru-tls 2>/dev/null || true
+        kubectl delete secret clerikc-ru-tls 2>/dev/null || true
+        
+        sleep 10
+        
+        # Применяем ingress с STAGING issuer
+        cat <<EOF | kubectl apply -f -
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: nginx-ingress
+          annotations:
+            nginx.ingress.kubernetes.io/rewrite-target: /
+            cert-manager.io/cluster-issuer: "letsencrypt-staging"
+            nginx.ingress.kubernetes.io/ssl-redirect: "false"
+        spec:
+          tls:
+          - hosts:
+            - clerikc.ru
+            secretName: clerikc-ru-tls
+          rules:
+          - host: "clerikc.ru"
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: nginx-service
+                    port:
+                      number: 80
+        EOF
         
         echo "⏳ Ожидаем выпуск SSL сертификата..."
         sleep 30
@@ -55,38 +141,79 @@ jobs:
       run: |
         echo "🔍 Проверяем SSL настройки..."
         
+        echo "=== Ingress ==="
+        kubectl get ingress
+        
         echo "=== Certificates ==="
         kubectl get certificates -A
-        
-        echo "=== Certificate Requests ==="
-        kubectl get certificaterequests -A
-        
-        echo "=== Orders ==="
-        kubectl get orders -A
-        
-        echo "=== Challenges ==="
-        kubectl get challenges -A
         
         echo "=== Подробности сертификата ==="
         kubectl describe certificate clerikc-ru-tls
         
-        echo "=== Проверка HTTPS доступа ==="
-        curl -I -k https://clerikc.ru:30443/ || echo "HTTPS проверка завершена"
+        echo "=== Логи cert-manager ==="
+        kubectl logs -l app=cert-manager -n cert-manager --tail=50
         
     - name: Monitor Certificate Status
       run: |
-        echo "📊 Мониторинг статуса сертификата (будет готов через 1-5 минут)..."
-        timeout 300s bash -c 'while true; do
-          STATUS=$(kubectl get certificate clerikc-ru-tls -o jsonpath="{.status.conditions[?(@.type==\"Ready\")].status}" 2>/dev/null || echo "Unknown")
+        echo "📊 Мониторинг статуса сертификата..."
+        
+        # Даем больше времени для выпуска
+        for i in {1..30}; do
+          STATUS=$(kubectl get certificate clerikc-ru-tls -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}" 2>/dev/null || echo "Unknown")
           if [ "$STATUS" = "True" ]; then
             echo "🎉 SSL сертификат готов и валиден!"
+            
+            echo "=== Успех! Теперь можно перейти на prod ==="
+            kubectl get certificate clerikc-ru-tls -o wide
             break
           elif [ "$STATUS" = "False" ]; then
             echo "❌ Ошибка в выпуске сертификата"
+            echo "=== Детали ошибки ==="
             kubectl describe certificate clerikc-ru-tls
+            echo "=== Логи cert-manager ==="
+            kubectl logs -l app=cert-manager -n cert-manager --tail=100
+            echo "=== Логи webhook ==="
+            kubectl logs -l app=webhook -n cert-manager --tail=100
             exit 1
           else
-            echo "⏳ Статус сертификата: $STATUS - ждем..."
+            echo "⏳ Статус сертификата: $STATUS - ждем... ($i/30)"
             sleep 10
           fi
-        done' || echo "Время ожидания истекло, проверьте сертификат вручную"
+        done
+        
+        if [ "$STATUS" != "True" ]; then
+          echo "⚠️ Время ожидания истекло, проверьте сертификат вручную"
+          kubectl describe certificate clerikc-ru-tls
+          kubectl get challenges,orders -A
+        fi
+        
+    - name: Switch to Production (если staging успешен)
+      if: success()
+      run: |
+        echo "🚀 Переходим на production issuer..."
+        
+        # Создаем production issuer
+        cat <<EOF | kubectl apply -f -
+        apiVersion: cert-manager.io/v1
+        kind: ClusterIssuer
+        metadata:
+          name: letsencrypt-prod
+        spec:
+          acme:
+            server: https://acme-v02.api.letsencrypt.org/directory
+            email: your-email@example.com  # ЗАМЕНИТЕ на реальный email
+            privateKeySecretRef:
+              name: letsencrypt-prod
+            solvers:
+            - http01:
+                ingress:
+                  class: nginx
+        EOF
+        
+        # Обновляем ingress на prod issuer
+        kubectl annotate ingress nginx-ingress \
+          cert-manager.io/cluster-issuer=letsencrypt-prod \
+          --overwrite
+          
+        echo "✅ Переключено на production. Удалите staging issuer когда убедитесь что все работает:"
+        echo "kubectl delete clusterissuer letsencrypt-staging"
