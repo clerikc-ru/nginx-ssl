@@ -21,51 +21,6 @@ jobs:
         echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
         kubectl cluster-info
         
-    - name: Cleanup existing ingress-nginx
-      run: |
-        # Удаляем все ресурсы ingress-nginx если они существуют
-        kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml --ignore-not-found=true
-        kubectl delete namespace ingress-nginx --ignore-not-found=true --timeout=30s
-        sleep 10
-        
-    - name: Deploy Ingress Nginx
-      run: |
-        # Устанавливаем ingress-nginx
-        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
-        
-        #   # Патчим deployment для запуска на control-plane с toleration
-        kubectl patch deployment ingress-nginx-controller -n ingress-nginx -p '{
-          "spec": {
-            "template": {
-              "spec": {
-                "nodeSelector": {
-                  "kubernetes.io/hostname": "clerikc.ru-control-plane"
-                },
-                "tolerations": [
-                  {
-                    "key": "node-role.kubernetes.io/control-plane",
-                    "operator": "Equal",
-                    "value": "",
-                    "effect": "NoSchedule"
-                  }
-                ]
-              }
-            }
-          }
-        }'
-        
-        # Принудительно удаляем старый pod
-        kubectl delete pods -n ingress-nginx -l app.kubernetes.io/component=controller
-        # Ждем перезапуска
-        kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=120s
-        
-        # Применяем наш NodePort сервис
-        kubectl apply -f k8s/ingress-service.yaml
-        
-        # Проверяем что pod запущен на control-plane
-        echo "=== Проверка размещения ingress-nginx ==="
-        kubectl get pods -n ingress-nginx -o wide
-        
     - name: Cleanup existing application
       run: |
         # Удаляем старые ресурсы приложения если они есть
@@ -73,7 +28,25 @@ jobs:
         kubectl delete -f k8s/service.yaml --ignore-not-found=true
         kubectl delete -f k8s/deployment.yaml --ignore-not-found=true
         kubectl delete configmap nginx-html --ignore-not-found=true
-        sleep 5
+        sleep 3
+        
+    - name: Deploy Ingress Nginx
+      run: |
+        # Устанавливаем ingress-nginx (он автоматически встанет на control-plane)
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+        
+        # Ждем запуска
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=180s
+        
+        # Применяем наш NodePort сервис
+        kubectl apply -f k8s/ingress-service.yaml
+        
+        # Проверяем размещение
+        echo "=== Проверка ingress-nginx ==="
+        kubectl get pods -n ingress-nginx -o wide
         
     - name: Create ConfigMap from HTML files
       run: |
@@ -98,27 +71,14 @@ jobs:
         kubectl get configmap nginx-html
         
         echo "=== Проверка Pods ==="
-        kubectl get pods -A -o wide
+        kubectl get pods -A -o wide | grep -E "(nginx-app|ingress-nginx)"
         
         echo "=== Проверка Services ==="
-        kubectl get svc -A
+        kubectl get svc -A | grep -E "(nginx-service|ingress-nginx)"
         
         echo "=== Проверка Ingress ==="
         kubectl get ingress -A
         
         echo "=== Проверка доступности ==="
-        # Даем время для полной настройки
-        sleep 15
+        sleep 10
         curl -v --retry 3 --retry-delay 5 http://185.8.22.53:30080/ | head -10 || echo "CURL failed, but continuing..."
-        
-    - name: Debug if needed
-      if: failure()
-      run: |
-        echo "=== Debug Information ==="
-        kubectl get nodes --show-labels
-        echo "--- ingress-nginx pods ---"
-        kubectl describe pods -n ingress-nginx
-        echo "--- ingress-nginx service ---"
-        kubectl describe svc -n ingress-nginx
-        echo "--- nginx-app pods ---"
-        kubectl describe pods -l app=nginx-app
