@@ -21,18 +21,16 @@ jobs:
         echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
         kubectl cluster-info
         
-    - name: Cleanup existing application
+    - name: Cleanup existing ingress-nginx
       run: |
-        # Удаляем старые ресурсы приложения если они есть
-        kubectl delete -f k8s/ingress.yaml --ignore-not-found=true
-        kubectl delete -f k8s/service.yaml --ignore-not-found=true
-        kubectl delete -f k8s/deployment.yaml --ignore-not-found=true
-        kubectl delete configmap nginx-html --ignore-not-found=true
-        sleep 3
+        # Удаляем ingress-nginx если он есть
+        kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml --ignore-not-found=true
+        kubectl delete namespace ingress-nginx --ignore-not-found=true
+        sleep 5
         
     - name: Deploy Ingress Nginx
       run: |
-        # Устанавливаем ingress-nginx (он автоматически встанет на control-plane)
+        # Устанавливаем ingress-nginx
         kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
         
         # Ждем запуска
@@ -41,22 +39,55 @@ jobs:
           --selector=app.kubernetes.io/component=controller \
           --timeout=180s
         
+        # ПАТЧ ДЛЯ ЗАПУСКА НА CONTROL-PLANE
+        kubectl patch deployment ingress-nginx-controller -n ingress-nginx -p '{
+          "spec": {
+            "template": {
+              "spec": {
+                "nodeSelector": {
+                  "kubernetes.io/hostname": "clerikc.ru-control-plane"
+                },
+                "tolerations": [
+                  {
+                    "key": "node-role.kubernetes.io/control-plane",
+                    "operator": "Equal", 
+                    "value": "",
+                    "effect": "NoSchedule"
+                  }
+                ]
+              }
+            }
+          }
+        }'
+        
+        # Удаляем старый pod и ждем нового
+        kubectl delete pods -n ingress-nginx -l app.kubernetes.io/component=controller
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=180s
+        
         # Применяем наш NodePort сервис
         kubectl apply -f k8s/ingress-service.yaml
         
-        # Проверяем размещение
         echo "=== Проверка ingress-nginx ==="
         kubectl get pods -n ingress-nginx -o wide
         
+    - name: Cleanup existing application
+      run: |
+        kubectl delete -f k8s/ingress.yaml --ignore-not-found=true
+        kubectl delete -f k8s/service.yaml --ignore-not-found=true
+        kubectl delete -f k8s/deployment.yaml --ignore-not-found=true
+        kubectl delete configmap nginx-html --ignore-not-found=true
+        sleep 3
+        
     - name: Create ConfigMap from HTML files
       run: |
-        # Создаем ConfigMap из папки html/
         kubectl create configmap nginx-html --from-file=html/ -o yaml --dry-run=client > k8s/configmap-generated.yaml
         kubectl apply -f k8s/configmap-generated.yaml
         
     - name: Deploy Application
       run: |
-        # Применяем все манифесты
         kubectl apply -f k8s/deployment.yaml
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/ingress.yaml
@@ -67,18 +98,9 @@ jobs:
         
     - name: Verify Setup
       run: |
-        echo "=== Проверка ConfigMap ==="
-        kubectl get configmap nginx-html
-        
-        echo "=== Проверка Pods ==="
-        kubectl get pods -A -o wide | grep -E "(nginx-app|ingress-nginx)"
-        
-        echo "=== Проверка Services ==="
-        kubectl get svc -A | grep -E "(nginx-service|ingress-nginx)"
-        
-        echo "=== Проверка Ingress ==="
-        kubectl get ingress -A
-        
-        echo "=== Проверка доступности ==="
+        echo "=== Итоговая проверка ==="
+        kubectl get pods -n ingress-nginx -o wide
+        kubectl get ingress
+        echo "=== Проверка портов ==="
         sleep 10
-        curl -v --retry 3 --retry-delay 5 http://185.8.22.53:30080/ | head -10 || echo "CURL failed, but continuing..."
+        curl -v --retry 3 --retry-delay 5 http://185.8.22.53:30080/ | head -10 || echo "CURL failed"
