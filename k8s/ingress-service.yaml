@@ -5,6 +5,8 @@ metadata:
   namespace: ingress-nginx
 spec:
   type: NodePort
+  externalIPs:
+    - 185.8.22.53
   ports:
   - name: http
     port: 80
