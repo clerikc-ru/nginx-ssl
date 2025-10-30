@@ -34,27 +34,16 @@ jobs:
         kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
         
         # Ждем запуска
-        sleep 30
         kubectl wait --namespace ingress-nginx \
           --for=condition=ready pod \
           --selector=app.kubernetes.io/component=controller \
           --timeout=180s
         
-        # Настраиваем ingress-nginx на запуск на control-plane
-        kubectl patch deployment ingress-nginx-controller -n ingress-nginx -p '{
-          "spec": {
-            "template": {
-              "spec": {
-                "nodeSelector": {
-                  "ingress-ready": "true"
-                }
-              }
-            }
-          }
-        }'
+        # Настраиваем ingress-nginx на запуск ТОЛЬКО на control-plane
+        kubectl patch deployment ingress-nginx-controller -n ingress-nginx -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"clerikc.ru-control-plane"}}}}}'
         
         # Ждем перезапуска
-        kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=90s
+        kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=120s
         
         # Применяем наш NodePort сервис
         kubectl apply -f k8s/ingress-service.yaml
@@ -92,7 +81,7 @@ jobs:
     - name: Verify Setup
       run: |
         echo "=== Проверка ConfigMap ==="
-        kubectl get configmap nginx-html -o yaml | head -20
+        kubectl get configmap nginx-html
         
         echo "=== Проверка Pods ==="
         kubectl get pods -A -o wide
@@ -105,7 +94,7 @@ jobs:
         
         echo "=== Проверка доступности ==="
         # Даем время для полной настройки
-        sleep 10
+        sleep 15
         curl -v --retry 3 --retry-delay 5 http://185.8.22.53:30080/ | head -10 || echo "CURL failed, but continuing..."
         
     - name: Debug if needed
