@@ -1,0 +1,43 @@
+name: Deploy Nginx Configuration
+
+on:
+  push:
+    tags:
+      - 'nginx-fix*'
+  workflow_dispatch:
+
+jobs:
+  deploy-nginx:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Kubernetes
+      env:
+        KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      run: |
+        mkdir -p ~/.kube
+        echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
+        kubectl cluster-info
+        
+    - name: Deploy Nginx ConfigMap
+      run: |
+        kubectl apply -f config-nginx/nginx-configmap.yaml
+        
+    - name: Deploy HTML content
+      run: |
+        # Обновляем ConfigMap с HTML контентом
+        kubectl create configmap html-content \
+          --from-file=html/index.html \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+    - name: Restart Nginx pods to apply config changes
+      run: |
+        kubectl rollout restart deployment/nginx-deployment
+        
+    - name: Verify deployment
+      run: |
+        kubectl rollout status deployment/nginx-deployment
+        kubectl get pods -l app=nginx

@@ -1,0 +1,58 @@
+name: Deploy Application
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: contains(github.ref, 'tags/v') || github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Kubernetes
+      env:
+        KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      run: |
+        mkdir -p ~/.kube
+        echo "$KUBE_CONFIG_DATA" | base64 -d > ~/.kube/config
+        kubectl cluster-info
+        
+    - name: Deploy Nginx infrastructure
+      if: github.ref == 'refs/heads/main' || contains(github.ref, 'tags/v')
+      run: |
+        # Устанавливаем ingress-nginx если еще не установлен
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+        
+        # Ждем готовности ingress контроллера
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=90s
+          
+        # Устанавливаем cert-manager если еще не установлен
+        kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+        
+        # Ждем готовности cert-manager
+        sleep 30
+        
+        # Применяем базовую конфигурацию
+        kubectl apply -f k8s/certificate.yaml
+        kubectl apply -f k8s/ingress.yaml
+        kubectl apply -f config-nginx/nginx-configmap.yaml
+        kubectl apply -f deploy-nginx.yaml
+        
+    - name: Verify SSL certificate
+      run: |
+        echo "Waiting for certificate to be ready..."
+        kubectl wait --for=condition=ready certificate clerikc-certificate --timeout=300s
+        
+    - name: Check application status
+      run: |
+        kubectl get all,ingress,certificate

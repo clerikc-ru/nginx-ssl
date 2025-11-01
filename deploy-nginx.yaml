@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        volumeMounts:
+        - name: html-content
+          mountPath: /usr/share/nginx/html
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: default.conf
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d/custom-server.conf
+          subPath: custom-server.conf
+        - name: ssl-cert
+          mountPath: /etc/ssl/certs/tls.crt
+          subPath: tls.crt
+        - name: ssl-key
+          mountPath: /etc/ssl/private/tls.key
+          subPath: tls.key
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: html-content
+        configMap:
+          name: html-content
+      - name: nginx-config
+        configMap:
+          name: nginx-custom-config
+      - name: ssl-cert
+        secret:
+          secretName: clerikc-tls
+          items:
+          - key: tls.crt
+            path: tls.crt
+      - name: ssl-key
+        secret:
+          secretName: clerikc-tls
+          items:
+          - key: tls.key
+            path: tls.key
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: default
+spec:
+  selector:
+    app: nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: html-content
+  namespace: default
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Clerikc</title>
+    </head>
+    <body>
+        <h1>Welcome to Clerikc!</h1>
+        <p>Nginx is successfully configured and running.</p>
+    </body>
+    </html>
